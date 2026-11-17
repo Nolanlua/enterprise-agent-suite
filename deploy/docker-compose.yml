@@ -1,0 +1,130 @@
+name: enterprise-agent-suite
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: agent
+      POSTGRES_DB: agent_platform
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent -d agent_platform"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: agent_orders
+      MYSQL_USER: agent
+      MYSQL_PASSWORD: agent
+    ports: ["3306:3306"]
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ../services/order-service/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uagent", "-pagent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    ports: ["6333:6333"]
+    volumes: ["qdrant_data:/qdrant/storage"]
+
+  opensearch:
+    image: opensearchproject/opensearch:2.19.0
+    environment:
+      discovery.type: single-node
+      plugins.security.disabled: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports: ["9200:9200"]
+
+  neo4j:
+    image: neo4j:5-community
+    environment:
+      NEO4J_AUTH: neo4j/neo4j123
+    ports: ["7474:7474", "7687:7687"]
+    volumes: ["neo4j_data:/data"]
+
+  minio:
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    ports: ["9000:9000", "9001:9001"]
+    volumes: ["minio_data:/data"]
+
+  data-platform:
+    build:
+      context: ..
+      dockerfile: platforms/data-platform/Dockerfile
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://agent:agent@postgres:5432/agent_platform
+    ports: ["8001:8001"]
+    depends_on: {postgres: {condition: service_healthy}}
+
+  eval-platform:
+    build:
+      context: ..
+      dockerfile: platforms/eval-platform/Dockerfile
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://agent:agent@postgres:5432/agent_platform
+    ports: ["8002:8002"]
+    depends_on: {postgres: {condition: service_healthy}}
+
+  tcm-agent:
+    build:
+      context: ..
+      dockerfile: apps/tcm-knowledge-agent/Dockerfile
+    env_file: ../.env
+    environment:
+      DATA_PLATFORM_URL: http://data-platform:8001
+      EVAL_PLATFORM_URL: http://eval-platform:8002
+      QDRANT_URL: http://qdrant:6333
+      OPENSEARCH_URL: http://opensearch:9200
+      NEO4J_URL: http://neo4j:7474
+    ports: ["8011:8011"]
+    depends_on: [data-platform, qdrant, opensearch]
+
+  retail-agent:
+    build:
+      context: ..
+      dockerfile: apps/retail-ordering-agent/Dockerfile
+    env_file: ../.env
+    environment:
+      DATA_PLATFORM_URL: http://data-platform:8001
+      ORDER_SERVICE_URL: http://order-service:8020
+    ports: ["8012:8012"]
+    depends_on: [data-platform, order-service]
+
+  order-service:
+    build:
+      context: ../services/order-service
+      dockerfile: Dockerfile
+    environment:
+      ORDER_SERVICE_ADDR: ":8020"
+      MYSQL_DSN: "agent:agent@tcp(mysql:3306)/agent_orders?parseTime=true&loc=UTC"
+      SUPPLIER_BASE_URL: "http://host.docker.internal:9000"
+      SUPPLIER_TOKEN: "supplier-token"
+      ORDER_INTERNAL_TOKEN: "internal-token"
+    ports: ["8020:8020"]
+    depends_on: {mysql: {condition: service_healthy}}
+
+volumes:
+  pgdata:
+  mysql_data:
+  qdrant_data:
+  minio_data:

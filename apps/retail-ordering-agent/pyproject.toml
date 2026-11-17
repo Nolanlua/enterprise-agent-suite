@@ -1,0 +1,25 @@
+[project]
+name = "retail-ordering-agent"
+version = "0.1.0"
+description = "Enterprise retail replenishment agent with deterministic forecasting and idempotent ordering"
+requires-python = ">=3.12"
+dependencies = [
+  "agent-common",
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.30,<1",
+  "pydantic>=2.8,<3",
+  "httpx>=0.27,<1",
+  "langgraph>=0.6,<2",
+  "langchain-core>=0.3,<2",
+  "prometheus-client>=0.20,<1",
+  "structlog>=24.1,<26",
+]
+
+[tool.uv.sources]
+agent-common = { workspace = true }
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
